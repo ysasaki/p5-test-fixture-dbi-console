@@ -1,11 +1,13 @@
 package Test::Fixture::DBI::Console;
 use strict;
 use warnings;
-use DBI;
 use UNIVERSAL::require;
+use IPC::Open3;
+use IO::Select;
+use Term::ReadLine;
 use base qw/Class::Accessor::Fast/;
 
-__PACKAGE__->mk_accessors(qw/database dbh/);
+__PACKAGE__->mk_accessors(qw/database term console_out/);
 
 our $VERSION = '0.01';
 
@@ -24,8 +26,16 @@ sub new {
         },
         $class;
 
+    $self->setup_term();
     $self->setup_db();
     $self;
+}
+
+sub setup_term {
+    my $self = shift;
+    my $term = Term::ReadLine->new('Test::Fixture::DBI::Console');
+    $self->console_out( $term->OUT || \*STDOUT );
+    $self->term($term);
 }
 
 sub setup_db {
@@ -37,15 +47,34 @@ sub setup_db {
         $db_class->use or die $@;
     }
 
-    my $db = $db_class->new( %{ $self->{database_opts} } );
+    my $db = $db_class->new(
+        console_out => $self->console_out,
+        %{ $self->{database_opts} }
+    );
     if ($db) {
         $self->database($db);
-
-        my $dbh = DBI->connect( dsn => $db->dsn ) or die $DBI::errstr;
-        $self->dbh($dbh);
     }
     else {
         die "cannot start database $self->{type}";
+    }
+}
+
+sub COMMAND_RE () {qr/^(?:make_database|make_fixture|exit)/}
+
+sub run {
+    my $self = shift;
+
+    my $term   = $self->term;
+    my $prompt = 'fixture> ';
+    my $cmd_re = COMMAND_RE;
+    while ( defined( $_ = $term->readline($prompt) ) ) {
+        if (/$cmd_re/) {
+
+            # TODO
+        }
+        else {
+            print $self->database->client_write($_);
+        }
     }
 }
 

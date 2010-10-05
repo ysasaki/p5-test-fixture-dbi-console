@@ -3,51 +3,9 @@
 use strict;
 use warnings;
 use Test::Fixture::DBI::Console;
-use Term::Readline;
 
 my $type = shift || die usage();
-my $console = Test::Fixture::DBI::Console->new( database => $type, );
-
-my $dbh = $console->dbh;
-
-my $term   = Term::Readline->new('Test::Fixture::DBI::Console');
-my $prompt = "fixture> ";
-my $OUT    = $term->OUT || \*STDOUT;
-
-my $sql = '';
-while ( defined( $_ = $term->readline($prompt) ) ) {
-	chomp;
-
-    if (/^make_database/) {
-		# TODO
-    }
-    elsif (/^make_fixture/) {
-		# TODO
-    }
-	elsif ( /^(.*;)(.*)$/ ) {
-		$sql .= $1;
-
-        $term->addhistory($sql);
-
-		my $ret;
-        local $@;
-        eval {
-			my $ret = $dbh->do($sql);
-			$dbh->commit;
-			printf $OUT '%d rows affected', $ret;
-		};
-        if ($@) {
-            print $OUT $@;
-			$dbh->rollback;
-			print $OUT 'database handle rollback';
-        }
-
-		$sql = $2;
-	}
-    else {
-		$sql .= $_;
-    }
-}
+my $console = Test::Fixture::DBI::Console->new( database => $type )->run();
 
 sub usage {
     print <<EOM;
