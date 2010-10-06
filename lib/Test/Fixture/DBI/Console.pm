@@ -8,6 +8,7 @@ use Text::TabularDisplay;
 use Test::Fixture::DBI;
 use Test::Fixture::DBI::Util;
 use DBI;
+use YAML::Syck;
 use base qw/Class::Accessor::Fast/;
 
 __PACKAGE__->mk_accessors(qw/database/);
@@ -78,6 +79,9 @@ sub run {
             $file ||= _new_file('database');
             make_database_yaml( $dbh, $file );
             printf "Create database schema file: %s\n", $file;
+
+            # reset sql
+            $sql = '';
         }
         elsif ( $input =~ qr/^\s*make_fixture/ ) {
 
@@ -86,12 +90,18 @@ sub run {
             $file ||= _new_file('fixture');
 
             my $tables = $dbh->selectcol_arrayref('SHOW TABLES');
+            my $data;
             for my $table (@$tables) {
                 make_fixture_yaml( $dbh, $table, [qw/id/],
                     "SELECT * FROM $table", $file );
+                push @$data, _slurp($file);
             }
+            _dump($file, $data);
 
             printf "Create fixture file: %s\n", $file;
+
+            # reset sql
+            $sql = '';
         }
         elsif ( $input =~ qr/^\s*construct_database/ ) {
             my ( $cmd, $file ) = split /\s/, $input;
@@ -107,6 +117,9 @@ sub run {
 
                 print "Load database schema from $file\n";
             }
+
+            # reset sql
+            $sql = '';
         }
         elsif ( $input =~ qr/^\s*construct_fixture/ ) {
             my ( $cmd, $file ) = split /\s/, $input;
@@ -122,6 +135,9 @@ sub run {
 
                 print "Load fixture from $file\n";
             }
+
+            # reset sql
+            $sql = '';
         }
         elsif ( !$sql and $input =~ /^\s*delimiter\s+(.+)/i ) {
 
@@ -146,6 +162,10 @@ sub run {
 
             my $rv;
             unless ( $rv = $sth->execute ) {
+
+                # reset sql
+                $sql = '';
+
                 next;
             }
 
@@ -200,6 +220,17 @@ sub _can_show_table {
     return $sql =~ $CAN_SHOW_TABLE;
 }
 
+sub _slurp {
+    my $file = shift;
+
+    my $data = YAML::Syck::LoadFile($file);
+    return @$data;
+}
+
+sub _dump {
+    my ( $file, $data ) = @_;
+    YAML::Syck::DumpFile($file,$data);
+}
 1;
 __END__
 
