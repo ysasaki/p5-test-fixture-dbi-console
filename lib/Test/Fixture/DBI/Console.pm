@@ -1,15 +1,18 @@
 package Test::Fixture::DBI::Console;
 use strict;
 use warnings;
-use UNIVERSAL::require;
-use IPC::Open3;
-use IO::Select;
+use File::Temp;
 use Term::ReadLine;
+use UNIVERSAL::require;
+use Text::TabularDisplay;
+use Test::Fixture::DBI::Util;
+use DBI;
 use base qw/Class::Accessor::Fast/;
 
-__PACKAGE__->mk_accessors(qw/database term console_out/);
+__PACKAGE__->mk_accessors(qw/database/);
 
 our $VERSION = '0.01';
+our $DEBUG   = $ENV{FIXTURE_DEBUG} ? 1 : 0;
 
 sub new {
     my $class = shift;
@@ -26,16 +29,8 @@ sub new {
         },
         $class;
 
-    $self->setup_term();
     $self->setup_db();
     $self;
-}
-
-sub setup_term {
-    my $self = shift;
-    my $term = Term::ReadLine->new('Test::Fixture::DBI::Console');
-    $self->console_out( $term->OUT || \*STDOUT );
-    $self->term($term);
 }
 
 sub setup_db {
@@ -47,10 +42,7 @@ sub setup_db {
         $db_class->use or die $@;
     }
 
-    my $db = $db_class->new(
-        console_out => $self->console_out,
-        %{ $self->{database_opts} }
-    );
+    my $db = $db_class->new( %{ $self->{database_opts} } );
     if ($db) {
         $self->database($db);
     }
@@ -59,23 +51,117 @@ sub setup_db {
     }
 }
 
-sub COMMAND_RE () {qr/^(?:make_database|make_fixture|exit)/}
-
 sub run {
     my $self = shift;
 
-    my $term   = $self->term;
-    my $prompt = 'fixture> ';
-    my $cmd_re = COMMAND_RE;
-    while ( defined( $_ = $term->readline($prompt) ) ) {
-        if (/$cmd_re/) {
+    my $dbh = DBI->connect( $self->database->connect_info,
+        { RaiseError => 0, PrintError => 1, AutoCommit => 1 } )
+        or die $DBI::errstr;
 
-            # TODO
+    my $term   = Term::ReadLine->new(__PACKAGE__);
+    my $prompt = 'fixture> ';
+
+    my $sql;
+    my $sql_delimiter = ';';
+    my $sth;
+
+    while ( defined( my $input = $term->readline($prompt) ) ) {
+        if ( $input =~ qr/^\s*(?:quit|exit)/ ) {
+            last;
+        }
+        elsif ( $input =~ qr/^\s*make_database/ ) {
+            my ( $cmd, $file ) = split /\s/, $input;
+            $file ||= _new_file('database');
+            make_database_yaml( $dbh, $file );
+            printf "Create database schema file: %s\n", $file;
+        }
+        elsif ( $input =~ qr/^\s*make_fixture/ ) {
+
+            # FIXME I would like to take more arguments for tables and ids.
+            my ( $cmd, $file ) = split /\s/, $input;
+            $file ||= _new_file('fixture');
+
+            my $tables = $dbh->selectcol_arrayref('SHOW TABLES');
+            for my $table (@$tables) {
+                make_fixture_yaml( $dbh, $table, [qw/id/],
+                    "SELECT * FROM $table", $file );
+            }
+
+            printf "Create fixture file: %s\n", $file;
+        }
+        elsif ( !$sql and $input =~ /^\s*delimiter\s+(.+)/i ) {
+
+            # TODO change delemiter
+            $sql_delimiter = $1;
+            $dbh->do($input);
+
+        }
+        elsif ( $input =~ /$sql_delimiter/ ) {
+
+            # TODO @rest don't use yet
+            my ( $hunk, @rest ) = split /$sql_delimiter/, $input;
+
+            $sql .= _trim($hunk);
+
+            warn "Exec SQL: $sql" if $DEBUG;
+
+            my $show_table = _can_show_table($sql);
+            unless ( $sth = $dbh->prepare($sql) ) {
+                next;
+            }
+
+            my $rv;
+            unless ( $rv = $sth->execute ) {
+                next;
+            }
+
+            if ( $show_table ) {
+                # TODO Text::TD has a bug related columns length.
+                # so we create object in this scope.
+                my $table = Text::TabularDisplay->new;
+                $table->columns( @{ $sth->{'NAME'} } );
+
+                while ( my $row = $sth->fetchrow_arrayref ) {
+                    $table->add($row);
+                }
+
+                printf "%s\n", $table->render;
+            }
+
+            $sth->finish;
+            printf "Affected %d rows\n", $rv if $rv;
+
+            # reset sql
+            $sql = '';
         }
         else {
-            print $self->database->client_write($_);
+            $sql .= _trim($input);
         }
     }
+
+    $dbh->disconnect or die $dbh->errstr;
+}
+
+sub _trim {
+    my $hunk = shift;
+    $hunk =~ s/^\s+$//;
+    $hunk =~ s/(?:\r)?\n$/ /;
+    $hunk;
+}
+
+sub _new_file {
+    my $cmd = shift;
+    File::Temp->new(
+        TEMPLATE => $cmd . '_XXXX',
+        SUFFIX   => '.yaml',
+        UNLINK   => 0
+    );
+}
+
+my $CAN_SHOW_TABLE = qr/^(?:select|show|desc)/i;
+sub _can_show_table {
+    my $sql = shift;
+    return $sql =~ $CAN_SHOW_TABLE;
 }
 
 1;

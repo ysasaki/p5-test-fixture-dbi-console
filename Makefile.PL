@@ -3,6 +3,7 @@ name 'Test-Fixture-DBI-Console';
 all_from 'lib/Test/Fixture/DBI/Console.pm';
 
 requires 'DBI' => 0;
+requires 'Text::TabularDisplay' => '1.22';
 requires 'Term::ReadLine' => 0;
 requires 'Test::Fixture::DBI' => '0.03';
 requires 'Test::mysqld'       => '0.11';
