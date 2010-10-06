@@ -5,6 +5,7 @@ use File::Temp;
 use Term::ReadLine;
 use UNIVERSAL::require;
 use Text::TabularDisplay;
+use Test::Fixture::DBI;
 use Test::Fixture::DBI::Util;
 use DBI;
 use base qw/Class::Accessor::Fast/;
@@ -12,7 +13,7 @@ use base qw/Class::Accessor::Fast/;
 __PACKAGE__->mk_accessors(qw/database/);
 
 our $VERSION = '0.01';
-our $DEBUG   = $ENV{FIXTURE_DEBUG} ? 1 : 0;
+our $DEBUG = $ENV{FIXTURE_DEBUG} ? 1 : 0;
 
 sub new {
     my $class = shift;
@@ -58,6 +59,9 @@ sub run {
         { RaiseError => 0, PrintError => 1, AutoCommit => 1 } )
         or die $DBI::errstr;
 
+    # avoid buffering
+    local $| = 1;
+
     my $term   = Term::ReadLine->new(__PACKAGE__);
     my $prompt = 'fixture> ';
 
@@ -89,16 +93,46 @@ sub run {
 
             printf "Create fixture file: %s\n", $file;
         }
+        elsif ( $input =~ qr/^\s*construct_database/ ) {
+            my ( $cmd, $file ) = split /\s/, $input;
+            unless ( -e $file and -r _ ) {
+                print "file does not exists or not readable: $file\n";
+            }
+            else {
+                local $dbh->{AutoCommit} = 0;
+                construct_database(
+                    dbh      => $dbh,
+                    database => $file,
+                );
+
+                print "Load database schema from $file\n";
+            }
+        }
+        elsif ( $input =~ qr/^\s*construct_fixture/ ) {
+            my ( $cmd, $file ) = split /\s/, $input;
+            unless ( -e $file and -r _ ) {
+                print "file does not exists or not readable: $file\n";
+            }
+            else {
+                local $dbh->{AutoCommit} = 0;
+                construct_fixture(
+                    dbh     => $dbh,
+                    fixture => $file,
+                );
+
+                print "Load fixture from $file\n";
+            }
+        }
         elsif ( !$sql and $input =~ /^\s*delimiter\s+(.+)/i ) {
 
-            # TODO change delemiter
+            # TODO This code was not tested yet
             $sql_delimiter = $1;
             $dbh->do($input);
 
         }
         elsif ( $input =~ /$sql_delimiter/ ) {
 
-            # TODO @rest don't use yet
+            # TODO I must add some code for @rest.
             my ( $hunk, @rest ) = split /$sql_delimiter/, $input;
 
             $sql .= _trim($hunk);
@@ -115,9 +149,10 @@ sub run {
                 next;
             }
 
-            if ( $show_table ) {
+            if ($show_table) {
+
                 # TODO Text::TD has a bug related columns length.
-                # so we create object in this scope.
+                # So avoid it, we create object in this scope.
                 my $table = Text::TabularDisplay->new;
                 $table->columns( @{ $sth->{'NAME'} } );
 
@@ -159,6 +194,7 @@ sub _new_file {
 }
 
 my $CAN_SHOW_TABLE = qr/^(?:select|show|desc)/i;
+
 sub _can_show_table {
     my $sql = shift;
     return $sql =~ $CAN_SHOW_TABLE;
