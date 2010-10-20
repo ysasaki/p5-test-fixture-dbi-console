@@ -1,4 +1,8 @@
 Revision history for Perl extension Test::Fixture::DBI::Console
 
+0.01_01	Thu Oct 21 00:01:51 2010
+		- add Test::Fixture::DBI::Console::SQL for controlling SQL statement
+		- rename Test::Fixture::DBI::Console::Base to Test::Fixture::DBI::Console::Backend
+
 0.01    Mon Oct  4 22:43:44 2010
         - original version

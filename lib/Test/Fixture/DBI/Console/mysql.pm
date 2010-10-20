@@ -1,7 +1,7 @@
 package Test::Fixture::DBI::Console::mysql;
 use strict;
 use warnings;
-use base qw/Test::Fixture::DBI::Console::Base/;
+use base qw/Test::Fixture::DBI::Console::Backend/;
 use Test::mysqld;
 
 my %DEFAULT_OPTIONS = ( 'skip-networking' => '' );

@@ -1,4 +1,4 @@
-package Test::Fixture::DBI::Console::Base;
+package Test::Fixture::DBI::Console::Backend;
 use strict;
 use warnings;
 use base qw/Class::Accessor::Fast/;

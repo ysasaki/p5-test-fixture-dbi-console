@@ -7,13 +7,14 @@ use UNIVERSAL::require;
 use Text::TabularDisplay;
 use Test::Fixture::DBI;
 use Test::Fixture::DBI::Util;
+use Test::Fixture::DBI::Console::SQL;
 use DBI;
 use YAML::Syck;
 use base qw/Class::Accessor::Fast/;
 
-__PACKAGE__->mk_accessors(qw/database/);
+__PACKAGE__->mk_accessors(qw/database sql/);
 
-our $VERSION = '0.01';
+our $VERSION = '0.01_01';
 our $DEBUG = $ENV{FIXTURE_DEBUG} ? 1 : 0;
 
 sub new {
@@ -27,7 +28,8 @@ sub new {
         dbh           => undef,
         database      => undef,
         type          => $args{database},
-        database_opts => $args{database_opts} || +{}
+        database_opts => $args{database_opts} || +{},
+        sql           => Test::Fixture::Console::SQL->new,
         },
         $class;
 
@@ -53,23 +55,34 @@ sub setup_db {
     }
 }
 
-sub run {
+sub connect {
     my $self = shift;
-
-    my $dbh = DBI->connect( $self->database->connect_info,
+    my $dbh  = DBI->connect( $self->database->connect_info,
         { RaiseError => 0, PrintError => 1, AutoCommit => 1 } )
         or die $DBI::errstr;
+    return $dbh;
+}
+
+sub get_term {
+    my $self   = shift;
+    my $term   = Term::ReadLine->new(__PACKAGE__);
+    my $prompt = 'fixture> ';
+    return $term, $prompt;
+}
+
+sub run {
+    my $self = shift;
 
     # avoid buffering
     local $| = 1;
 
-    my $term   = Term::ReadLine->new(__PACKAGE__);
-    my $prompt = 'fixture> ';
+    my $dbh = $self->connect();
+    my ( $term, $prompt ) = $self->get_term();
 
-    my $sql;
-    my $sql_delimiter = ';';
     my $sth;
+    my $sql_delimiter = ';';
 
+LOOP:
     while ( defined( my $input = $term->readline($prompt) ) ) {
         if ( $input =~ qr/^\s*(?:quit|exit)/ ) {
             last;
@@ -78,10 +91,9 @@ sub run {
             my ( $cmd, $file ) = split /\s/, $input;
             $file ||= _new_file('database');
             make_database_yaml( $dbh, $file );
-            printf "Create database schema file: %s\n", $file;
+            printf "Dump database schema to file: %s\n", $file;
 
-            # reset sql
-            $sql = '';
+            $self->sql->reset;
         }
         elsif ( $input =~ qr/^\s*make_fixture/ ) {
 
@@ -91,17 +103,18 @@ sub run {
 
             my $tables = $dbh->selectcol_arrayref('SHOW TABLES');
             my $data;
+
+            # TODO use return value of make_fixture_yaml
             for my $table (@$tables) {
                 make_fixture_yaml( $dbh, $table, [qw/id/],
                     "SELECT * FROM $table", $file );
                 push @$data, _slurp($file);
             }
-            _dump($file, $data);
+            _dump( $file, $data );
 
             printf "Create fixture file: %s\n", $file;
 
-            # reset sql
-            $sql = '';
+            $self->sql->reset;
         }
         elsif ( $input =~ qr/^\s*construct_database/ ) {
             my ( $cmd, $file ) = split /\s/, $input;
@@ -118,8 +131,7 @@ sub run {
                 print "Load database schema from $file\n";
             }
 
-            # reset sql
-            $sql = '';
+            $self->sql->reset;
         }
         elsif ( $input =~ qr/^\s*construct_fixture/ ) {
             my ( $cmd, $file ) = split /\s/, $input;
@@ -136,10 +148,9 @@ sub run {
                 print "Load fixture from $file\n";
             }
 
-            # reset sql
-            $sql = '';
+            $self->sql->reset;
         }
-        elsif ( !$sql and $input =~ /^\s*delimiter\s+(.+)/i ) {
+        elsif ( $input =~ /^\s*delimiter\s+(.+)/i ) {
 
             # TODO This code was not tested yet
             $sql_delimiter = $1;
@@ -149,10 +160,10 @@ sub run {
         elsif ( $input =~ /$sql_delimiter/ ) {
 
             # TODO I must add some code for @rest.
-            my ( $hunk, @rest ) = split /$sql_delimiter/, $input;
+            my ( $chunk, @rest ) = split /$sql_delimiter/, $input;
 
-            $sql .= _trim($hunk);
-
+            $self->sql->push($chunk);
+            my $sql = $self->sql->fetch;
             warn "Exec SQL: $sql" if $DEBUG;
 
             my $show_table = _can_show_table($sql);
@@ -162,10 +173,6 @@ sub run {
 
             my $rv;
             unless ( $rv = $sth->execute ) {
-
-                # reset sql
-                $sql = '';
-
                 next;
             }
 
@@ -184,24 +191,26 @@ sub run {
             }
 
             $sth->finish;
-            printf "Affected %d rows\n", $rv if $rv;
+            if ($rv) {
+                printf "%d rows%s\n", $rv,
+                    (
+                      $sql =~ /^insert/i ? 'rows inserted'
+                    : $sql =~ /^update/i ? 'rows affected'
+                    : ''
+                    );
+            }
 
-            # reset sql
-            $sql = '';
+            if (@rest) {
+                $input = join ' ', @rest;
+                goto LOOP;
+            }
         }
         else {
-            $sql .= _trim($input);
+			$self->sql->push($input);
         }
     }
 
     $dbh->disconnect or die $dbh->errstr;
-}
-
-sub _trim {
-    my $hunk = shift;
-    $hunk =~ s/^\s+$//;
-    $hunk =~ s/(?:\r)?\n$/ /;
-    $hunk;
 }
 
 sub _new_file {
@@ -229,7 +238,7 @@ sub _slurp {
 
 sub _dump {
     my ( $file, $data ) = @_;
-    YAML::Syck::DumpFile($file,$data);
+    YAML::Syck::DumpFile( $file, $data );
 }
 1;
 __END__
@@ -248,7 +257,7 @@ Test::Fixture::DBI::Console is
 
 =head1 AUTHOR
 
-aloelight E<lt>aloelight {at} gmail.comE<gt>
+Yoshihiro Sasaki E<lt>ysasaki {at} cpan.orgE<gt>
 
 =head1 SEE ALSO
 
